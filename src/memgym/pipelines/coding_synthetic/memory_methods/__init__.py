@@ -4,6 +4,7 @@ Registry
 --------
 - ``prompt``      – existing prompt-only strategies (basic, structured, etc.)
 - ``amem``        – A-MEM agentic Zettelkasten memory
+- ``allmem``      – All-Mem dynamic topology graph + wake/sleep consolidation
 - ``lightmem``    – LightMEM three-stage memory (extraction + embedding retrieval)
 - ``truncated``   – raw sliding-window truncation baseline
 - ``hipporag``    – HippoRAG knowledge-graph + Personalized PageRank
@@ -30,6 +31,7 @@ __all__ = [
 MEMORY_METHODS = {
     "prompt",
     "amem",
+    "allmem",
     "truncated",
     "lightmem",
     "hipporag",
@@ -86,6 +88,27 @@ def create_memory_method(
             embedding_model=config.get("embedding_model", "all-MiniLM-L6-v2"),
             retrieve_k=config.get("retrieve_k", 5),
             enable_evolution=config.get("enable_evolution", True),
+            api_base=config.get("api_base"),
+            api_key=config.get("api_key"),
+            max_ingest_chars=config.get("max_ingest_chars", 15000),
+        )
+
+    if method == "allmem":
+        from .allmem_method import AllMemMethod
+
+        return AllMemMethod(  # type: ignore[return-value]
+            llm_model=config.get("llm_model", "gpt-4o-mini"),
+            embedding_model=config.get("embedding_model", "all-MiniLM-L6-v2"),
+            embedding_device=config.get("embedding_device"),
+            reranker_device=config.get("reranker_device", "cpu"),
+            use_reranker=config.get("use_reranker", True),
+            anchor_k=config.get("anchor_k", 10),
+            final_k=config.get("final_k", 5),
+            max_candidates=config.get("max_candidates", 50),
+            sleep_interval=config.get("sleep_interval", 3),
+            diagnosis_workers=config.get("diagnosis_workers", 8),
+            semantic_threshold=config.get("semantic_threshold", 0.65),
+            semantic_out_degree=config.get("semantic_out_degree", 8),
             api_base=config.get("api_base"),
             api_key=config.get("api_key"),
             max_ingest_chars=config.get("max_ingest_chars", 15000),

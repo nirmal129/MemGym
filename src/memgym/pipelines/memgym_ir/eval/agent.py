@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # IR memory manager registry name → class
 IR_STRATEGIES = [
     "ir_passthrough", "ir_summarizing", "ir_structured",
-    "ir_naive_rag", "ir_bm25", "ir_amem", "ir_lightmem",
+    "ir_naive_rag", "ir_bm25", "ir_amem", "ir_allmem", "ir_lightmem",
     "ir_hipporag", "ir_simplemem",
 ]
 
@@ -62,6 +62,15 @@ def _get_ir_manager(strategy: str, question: str = "", max_size: int = 10, summa
             max_size=max_size,
             summarization_model=summarization_model,
             question=question,
+        )
+    elif strategy == "ir_allmem":
+        # Drive All-Mem's memory LLM through the same endpoint as the rest of
+        # the eval (summarization_model → e.g. local SGLang openai/<id>); the
+        # endpoint itself comes from OPENAI_API_BASE/OPENAI_API_KEY env.
+        return get_memory_model(
+            "ir_allmem",
+            question=question,
+            llm_model=summarization_model,
         )
     elif strategy in ("ir_naive_rag", "ir_bm25", "ir_amem", "ir_lightmem"):
         return get_memory_model(strategy, question=question)

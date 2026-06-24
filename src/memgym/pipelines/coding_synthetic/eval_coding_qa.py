@@ -286,6 +286,12 @@ def cmd_eval(args):
     # CLI flag wins unless the user already set max_ingest_chars in
     # --method-config; that lets advanced users override per-method.
     method_config.setdefault("max_ingest_chars", args.ingest_adapter_cap)
+    # All-Mem drives its memory LLM through LiteLLM; default it to the answerer
+    # model so it follows the same endpoint (SGLang/OpenAI/Gemini) unless the
+    # user overrides llm_model in --method-config. The endpoint is read from
+    # OPENAI_API_BASE/OPENAI_API_KEY env.
+    if method_name == "allmem":
+        method_config.setdefault("llm_model", args.model)
     memory_method = None
 
     if method_name != "prompt":
@@ -468,9 +474,9 @@ def main():
                         help="Save results to JSON file")
     p_eval.add_argument(
         "--method", type=str, default="prompt",
-        choices=["prompt", "amem", "truncated", "lightmem", "hipporag", "simplemem",
+        choices=["prompt", "amem", "allmem", "truncated", "lightmem", "hipporag", "simplemem",
                  "mem0", "memorybank"],
-        help="Memory method: prompt (use --strategy), amem, truncated, lightmem, "
+        help="Memory method: prompt (use --strategy), amem, allmem, truncated, lightmem, "
              "hipporag, simplemem, mem0, memorybank (default: prompt)",
     )
     p_eval.add_argument(

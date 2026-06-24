@@ -1,0 +1,30 @@
+# All-Mem (Agentic Lifelong Memory via Dynamic Topology Evolution) runtime deps.
+#
+# Install with: pip install -r requirements-allmem.txt
+#
+# All-Mem is used in:
+#   - MemGym-CodeQA (`memgym.pipelines.coding_synthetic`, --method allmem)
+#   - MemGym-DR    (`memgym.pipelines.memgym_ir`, --strategies ir_allmem)
+#
+# It shares the embedding-retrieval stack with A-MEM (sentence-transformers +
+# scikit-learn) and additionally requires networkx for the dynamic memory graph
+# and a CrossEncoder reranker (cross-encoder/ms-marco-MiniLM-L-6-v2, pulled by
+# sentence-transformers) for topology-aware retrieval. Copied from
+# requirements-amem.txt with networkx added.
+
+numpy>=1.24
+networkx>=3.0
+sentence-transformers>=3.0.0
+scikit-learn>=1.0.0
+torch>=2.0.0
+transformers>=4.30.0
+nltk>=3.8.0
+rank-bm25>=0.2.0
+openai>=1.0.0
+litellm>=1.65.0
+ollama>=0.1.0
+rouge-score>=0.1.2
+bert-score>=0.3.13
+tqdm>=4.65.0
+pandas>=2.0.0
+python-dotenv>=1.0.0
