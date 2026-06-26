@@ -5,6 +5,7 @@ Provides semantic search over memories using SentenceTransformers.
 """
 
 import pickle
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, TYPE_CHECKING
 
@@ -14,6 +15,36 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 if TYPE_CHECKING:
     from .note import MemoryNote
+
+
+# SentenceTransformer construction loads weights via a meta-device init
+# (transformers' low_cpu_mem_usage path) and then moves them to the target
+# device. That meta->device step relies on accelerate's init_empty_weights()
+# monkeypatch of torch.nn.Module, which is NOT thread-safe: two threads
+# building a model at once race on the patch's enter/exit, raising
+# "Cannot copy out of meta tensor; no data!" and leaving the process globally
+# stuck in meta-init mode (so every later load, even single-threaded, fails).
+#
+# Guard construction with a process-global lock and cache one model per
+# model_name. Only the (brief) build is serialized; encoding/retrieval stay
+# fully parallel, so callers can run many EmbeddingRetrievers across threads.
+_MODEL_CACHE: Dict[str, SentenceTransformer] = {}
+_MODEL_LOCK = threading.Lock()
+
+
+def _get_shared_model(model_name: str) -> SentenceTransformer:
+    """Return a shared SentenceTransformer, building it at most once per name."""
+    model = _MODEL_CACHE.get(model_name)
+    if model is not None:
+        return model
+    with _MODEL_LOCK:
+        # Re-check inside the lock: another thread may have built it while we
+        # waited.
+        model = _MODEL_CACHE.get(model_name)
+        if model is None:
+            model = SentenceTransformer(model_name)
+            _MODEL_CACHE[model_name] = model
+    return model
 
 
 class EmbeddingRetriever:
@@ -37,7 +68,7 @@ class EmbeddingRetriever:
             model_name: Name of the SentenceTransformer model to use
         """
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name)
+        self.model = _get_shared_model(model_name)
         self.corpus: List[str] = []
         self.embeddings: Optional[np.ndarray] = None
         self.document_ids: Dict[str, int] = {}  # Map document content to index

@@ -72,7 +72,19 @@ def _get_ir_manager(strategy: str, question: str = "", max_size: int = 10, summa
             question=question,
             llm_model=summarization_model,
         )
-    elif strategy in ("ir_naive_rag", "ir_bm25", "ir_amem", "ir_lightmem"):
+    elif strategy in ("ir_amem", "ir_lightmem"):
+        # A-Mem / LightMem run an internal LLM for note metadata + evolution.
+        # Like ir_allmem, drive it through the same endpoint as the eval
+        # (summarization_model → e.g. local SGLang openai/<id>) instead of the
+        # hardcoded Bedrock Haiku default, which otherwise fails with
+        # "Unable to locate credentials" and silently disables note metadata.
+        return get_memory_model(
+            strategy,
+            question=question,
+            llm_model=summarization_model,
+        )
+    elif strategy in ("ir_naive_rag", "ir_bm25"):
+        # Lexical/embedding retrieval only — no internal LLM to configure.
         return get_memory_model(strategy, question=question)
     elif strategy in ("ir_hipporag", "ir_simplemem"):
         return get_memory_model(strategy, question=question)
