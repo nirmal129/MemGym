@@ -66,6 +66,7 @@ class LiteLLMController:
         api_key: Optional[str] = None,
         temperature: float = 0.0,
         request_timeout: float = 120.0,
+        max_tokens: Optional[int] = 4096,
     ) -> None:
         # Imported lazily so importing the allmem package never hard-requires
         # litellm (the registry must still load if optional deps are missing).
@@ -76,6 +77,13 @@ class LiteLLMController:
         self.api_base = api_base
         self.api_key = api_key
         self.request_timeout = request_timeout
+        # Cap generation per call. All-Mem's internal outputs (semantic index,
+        # edge/diagnosis/consolidation JSON) are small, so this never truncates
+        # legitimate output — but it bounds the occasional greedy-decode (temp=0)
+        # repetition loop that, uncapped, runs away to tens of thousands of
+        # tokens (~300s/call at ~130 tok/s) and stalls the worker. Set to None
+        # to disable. drop_params=True means backends without max_tokens ignore it.
+        self.max_tokens = max_tokens
         self._is_reasoning = any(model.startswith(p) for p in _REASONING_PREFIXES)
         self.default_temperature = None if self._is_reasoning else temperature
 
@@ -102,6 +110,8 @@ class LiteLLMController:
             temp = None
         if temp is not None:
             kwargs["temperature"] = temp
+        if self.max_tokens is not None:
+            kwargs["max_tokens"] = self.max_tokens
         if response_format:
             kwargs["response_format"] = response_format
         if self.api_base:

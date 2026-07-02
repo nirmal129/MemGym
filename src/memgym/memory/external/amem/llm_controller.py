@@ -5,9 +5,21 @@ Uses LiteLLM for universal LLM access (OpenAI, Anthropic, local models via SGLan
 """
 
 import json
+import os
 from typing import Any, Dict, Optional
 
 from litellm import completion
+
+
+def _env_int(name: str) -> Optional[int]:
+    """Read an int from the environment, returning None if unset/blank/invalid."""
+    raw = os.getenv(name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 class LLMController:
@@ -25,6 +37,10 @@ class LLMController:
         api_base: API base URL (for local models)
         api_key: API key (uses env var if not provided)
         temperature: Generation temperature (default 0.7)
+        timeout: Per-request timeout in seconds (defaults to
+            LITELLM_REQUEST_TIMEOUT env var if not provided)
+        max_tokens: Max completion tokens (defaults to LITELLM_MAX_TOKENS
+            env var if not provided)
     """
 
     def __init__(
@@ -32,7 +48,9 @@ class LLMController:
         model: str = "gpt-4o-mini",
         api_base: Optional[str] = None,
         api_key: Optional[str] = None,
-        temperature: float = 0.7
+        temperature: float = 0.7,
+        timeout: Optional[int] = None,
+        max_tokens: Optional[int] = None
     ):
         """
         Initialize LLM controller.
@@ -42,10 +60,18 @@ class LLMController:
             api_base: API base URL for local models
             api_key: API key (optional, uses env var if not set)
             temperature: Generation temperature
+            timeout: Per-request timeout in seconds. Falls back to the
+                LITELLM_REQUEST_TIMEOUT env var, then litellm's default.
+            max_tokens: Max completion tokens. Falls back to the
+                LITELLM_MAX_TOKENS env var, then the server default.
         """
         self.model = model
         self.api_base = api_base
         self.api_key = api_key
+        # litellm ignores LITELLM_REQUEST_TIMEOUT/LITELLM_MAX_TOKENS env vars,
+        # so honor them here by passing the values as explicit call args.
+        self.timeout = timeout if timeout is not None else _env_int("LITELLM_REQUEST_TIMEOUT")
+        self.max_tokens = max_tokens if max_tokens is not None else _env_int("LITELLM_MAX_TOKENS")
         # Reasoning models (gpt-5*, o1*, o3*) only support temperature=1
         _reasoning_prefixes = ("gpt-5", "o1", "o3")
         if any(model.startswith(p) for p in _reasoning_prefixes):
@@ -124,6 +150,12 @@ class LLMController:
             if self.api_key:
                 completion_args["api_key"] = self.api_key
 
+            # Honor timeout / max_tokens when configured
+            if self.timeout is not None:
+                completion_args["timeout"] = self.timeout
+            if self.max_tokens is not None:
+                completion_args["max_tokens"] = self.max_tokens
+
             response = completion(**completion_args)
             return response.choices[0].message.content
 
@@ -167,6 +199,12 @@ class LLMController:
                 completion_args["api_base"] = self.api_base
             if self.api_key:
                 completion_args["api_key"] = self.api_key
+
+            # Honor timeout / max_tokens when configured
+            if self.timeout is not None:
+                completion_args["timeout"] = self.timeout
+            if self.max_tokens is not None:
+                completion_args["max_tokens"] = self.max_tokens
 
             response = completion(**completion_args)
             return response.choices[0].message.content

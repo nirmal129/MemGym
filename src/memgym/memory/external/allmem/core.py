@@ -17,6 +17,7 @@ import json
 import logging
 import pickle
 import random
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -45,6 +46,10 @@ except ImportError:
 
 _EMBEDDING_MODELS: Dict[Tuple[str, str], Any] = {}
 _RERANKERS: Dict[Tuple[str, str], Any] = {}
+# SentenceTransformer/CrossEncoder construction is NOT thread-safe (accelerate's
+# meta->device init monkeypatches torch.nn.Module). Serialize first-build so
+# parallel eval workers don't race; cache lookups after that are lock-free.
+_MODEL_LOCK = threading.Lock()
 
 
 class HashEmbeddingModel:
@@ -82,7 +87,12 @@ def get_shared_embedding(model_name: str, device: Optional[str] = None):
     if device is None:
         device = "cuda" if torch is not None and torch.cuda.is_available() else "cpu"
     key = (model_name, device)
-    if key not in _EMBEDDING_MODELS:
+    if key in _EMBEDDING_MODELS:
+        return _EMBEDDING_MODELS[key]
+    with _MODEL_LOCK:
+        # Re-check inside the lock: another thread may have built it while we waited.
+        if key in _EMBEDDING_MODELS:
+            return _EMBEDDING_MODELS[key]
         if SentenceTransformer is None:
             logger.warning("sentence-transformers is unavailable; using hash embeddings for smoke testing")
             model = HashEmbeddingModel()
@@ -111,7 +121,12 @@ def get_shared_reranker(
     if CrossEncoder is None:
         raise ImportError("sentence-transformers is unavailable")
     key = (model_name, device)
-    if key not in _RERANKERS:
+    if key in _RERANKERS:
+        return _RERANKERS[key]
+    with _MODEL_LOCK:
+        # Re-check inside the lock: another thread may have built it while we waited.
+        if key in _RERANKERS:
+            return _RERANKERS[key]
         automodel_args = {
             "low_cpu_mem_usage": False,
             "device_map": None,

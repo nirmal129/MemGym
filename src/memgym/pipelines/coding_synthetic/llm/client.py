@@ -10,11 +10,23 @@ Supports all LiteLLM backends:
 
 import asyncio
 import json
+import os
 import re
 from typing import Any, Dict, List, Optional
 
 from litellm import completion, acompletion
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+
+def _env_int(name: str) -> Optional[int]:
+    """Read an int from the environment, returning None if unset/blank/invalid."""
+    raw = os.getenv(name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 class LLMClient:
@@ -31,7 +43,9 @@ class LLMClient:
         api_base: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.7,
-        max_retries: int = 3
+        max_retries: int = 3,
+        timeout: Optional[int] = None,
+        max_tokens: Optional[int] = None
     ):
         """
         Initialize LLM client.
@@ -42,12 +56,22 @@ class LLMClient:
             api_key: API key (optional, uses env var if not set)
             temperature: Generation temperature
             max_retries: Maximum retry attempts for API calls
+            timeout: Per-request timeout in seconds. Falls back to the
+                LITELLM_REQUEST_TIMEOUT env var, then litellm's default.
+            max_tokens: Max completion tokens. Falls back to the
+                LITELLM_MAX_TOKENS env var, then the server default.
         """
         self.model = model
         self.api_base = api_base
         self.api_key = api_key
         self.temperature = temperature
         self.max_retries = max_retries
+        # litellm ignores LITELLM_REQUEST_TIMEOUT/LITELLM_MAX_TOKENS env vars,
+        # so honor them here by passing the values as explicit call args. A
+        # finite timeout prevents a single huge/stalled request from hanging
+        # the whole run (e.g. the largest-context instances).
+        self.timeout = timeout if timeout is not None else _env_int("LITELLM_REQUEST_TIMEOUT")
+        self.max_tokens = max_tokens if max_tokens is not None else _env_int("LITELLM_MAX_TOKENS")
 
     def _generate_empty_value(self, schema_type: str, schema_items: dict = None) -> Any:
         """Generate empty value based on JSON schema type."""
@@ -98,8 +122,15 @@ class LLMClient:
         if "gpt-5" not in self.model.lower():
             args["temperature"] = temperature or self.temperature
 
-        if max_tokens:
-            args["max_completion_tokens"] = max_tokens
+        # Explicit per-call max_tokens wins; otherwise fall back to the
+        # client-level default (LITELLM_MAX_TOKENS env var).
+        effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
+        if effective_max_tokens:
+            args["max_completion_tokens"] = effective_max_tokens
+
+        # Bound how long a single request may block (LITELLM_REQUEST_TIMEOUT).
+        if self.timeout is not None:
+            args["timeout"] = self.timeout
 
         if response_format:
             args["response_format"] = response_format

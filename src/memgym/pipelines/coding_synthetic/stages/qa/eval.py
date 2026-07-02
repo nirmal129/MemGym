@@ -14,7 +14,7 @@ import os
 import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from pathlib import Path
-from typing import Dict, Iterable, List, Literal, Optional
+from typing import Callable, Dict, Iterable, List, Literal, Optional
 
 from tqdm import tqdm
 
@@ -619,6 +619,7 @@ def evaluate_all(
     num_workers: int = 1,
     checkpoint_path: Optional[str] = None,
     memory_method: Optional[object] = None,
+    memory_method_factory: Optional[Callable[[], object]] = None,
     total_hint: Optional[int] = None,
     ingest_chars_per_call: int = DEFAULT_INGEST_CHARS_PER_CALL,
     ingest_max_calls: int = DEFAULT_INGEST_MAX_CALLS,
@@ -636,13 +637,24 @@ def evaluate_all(
         num_workers: Number of parallel threads (1 = sequential)
         checkpoint_path: JSONL file for incremental saves + resume
         memory_method: Optional pluggable memory method (see memory_methods/).
-            When set, num_workers is forced to 1 because memory methods carry
-            mutable state that is not thread-safe across instances.
+            Used in sequential mode and for the progress label. Memory methods
+            carry mutable state, so a single shared instance is not thread-safe
+            across instances — pass ``memory_method_factory`` to parallelize.
+        memory_method_factory: Optional zero-arg callable returning a fresh
+            memory method. When set with num_workers > 1, each worker thread
+            builds its own instance (construction serialized by a lock since the
+            embedding/reranker model loads are not thread-safe), so eval runs in
+            parallel safely. State is reset per instance, so reusing a
+            per-thread instance across instances matches sequential semantics.
         total_hint: optional total instance count for tqdm; when ``None`` the
             progress bar advances without a known total.
     """
-    if memory_method is not None and num_workers > 1:
-        print("[warn] memory_method is stateful — forcing num_workers=1")
+    # Per-thread isolation when a factory is available; otherwise a stateful
+    # single instance can't be shared across threads, so fall back to serial.
+    parallel_methods = num_workers > 1 and memory_method_factory is not None
+    if memory_method is not None and num_workers > 1 and memory_method_factory is None:
+        print("[warn] memory_method is stateful and no factory provided — "
+              "forcing num_workers=1")
         num_workers = 1
 
     done_ids = _load_checkpoint(checkpoint_path)
@@ -702,11 +714,28 @@ def evaluate_all(
     results: List[QAEvalResult] = []
     lock = threading.Lock()
 
+    # In parallel mode each worker thread gets its own memory method so the
+    # mutable reset/ingest/retrieve state is never shared. Construction is
+    # serialized (model loads aren't thread-safe); the built instance is cached
+    # on the thread and reused across instances (reset() clears it each time).
+    _thread_local = threading.local()
+    _factory_lock = threading.Lock()
+
+    def _method_for_thread():
+        if not parallel_methods:
+            return memory_method
+        method = getattr(_thread_local, "memory_method", None)
+        if method is None:
+            with _factory_lock:
+                method = memory_method_factory()
+            _thread_local.memory_method = method
+        return method
+
     def _work(inst):
         return evaluate_instance(
             inst, client, protocol, strategy, notes_budget, use_llm_scoring,
             no_repo_files=no_repo_files,
-            memory_method=memory_method,
+            memory_method=_method_for_thread(),
             ingest_chars_per_call=ingest_chars_per_call,
             ingest_max_calls=ingest_max_calls,
             answerer_prompt_char_cap=answerer_prompt_char_cap,

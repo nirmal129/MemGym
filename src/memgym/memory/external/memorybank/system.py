@@ -20,8 +20,32 @@ wall-clock spacing, which the synthetic pipeline does not exercise.
 from __future__ import annotations
 
 import math
+import threading
 import time
 from typing import Any, Dict, List, Optional
+
+
+# SentenceTransformer construction is NOT thread-safe (accelerate's meta->device
+# init monkeypatches torch.nn.Module), so parallel eval workers each building
+# their own encoder can race ("Cannot copy out of meta tensor"). Share one
+# encoder per model name behind a lock — encode() inference is thread-safe, so
+# only the (brief) build is serialized.
+_ENCODER_CACHE: Dict[str, Any] = {}
+_ENCODER_LOCK = threading.Lock()
+
+
+def _get_shared_encoder(model_name: str) -> Any:
+    encoder = _ENCODER_CACHE.get(model_name)
+    if encoder is not None:
+        return encoder
+    with _ENCODER_LOCK:
+        encoder = _ENCODER_CACHE.get(model_name)
+        if encoder is None:
+            from sentence_transformers import SentenceTransformer
+
+            encoder = SentenceTransformer(model_name)
+            _ENCODER_CACHE[model_name] = encoder
+    return encoder
 
 
 class MemoryBankSystem:
@@ -47,9 +71,7 @@ class MemoryBankSystem:
 
     def _ensure_encoder(self):
         if self._encoder is None:
-            from sentence_transformers import SentenceTransformer
-
-            self._encoder = SentenceTransformer(self._embedding_model)
+            self._encoder = _get_shared_encoder(self._embedding_model)
 
     def _chunk(self, text: str) -> List[str]:
         """Split on paragraph boundaries, then hard-cap each chunk by chars."""
